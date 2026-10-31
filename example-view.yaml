@@ -1,0 +1,15 @@
+# Panel view with the Luxtronik heat pump card.
+# Dashboard -> add view -> ⋮ -> "Edit in YAML" -> paste.
+# Everything below `type:` is optional; the card can also be configured in the UI editor.
+title: Heat pump
+path: heat-pump
+icon: mdi:heat-pump-outline
+type: panel
+cards:
+  - type: custom:luxtronik-heatpump-card
+    # title: Heat pump
+    # prefix: luxtronik_123456_0123   # auto-detected when omitted
+    # heat_source: auto               # auto | air | brine | water
+    # entities:
+    #   power: sensor.shelly_heat_pump_power   # external meter instead of the built-in reading
+    #   zwe: false                             # hide the auxiliary heater
