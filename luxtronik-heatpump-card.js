@@ -91,7 +91,8 @@ const I18N = {
     evu: "EVU-Sperre", since: "seit", fault: "Störung", fault_active: "Störung aktiv",
     defrost_running: "Abtauen läuft", defrost_in: "Abtauen in",
     heat_output: "Wärmeleistung", power: "Leistungsaufnahme", cop_heating: "COP Heizen", cop_dhw: "COP Warmwasser",
-    spread: "Spreizung", jaz: "Arbeitszahl gesamt", zwe: "ZWE",
+    spread: "Spreizung", jaz: "JAZ (12 Monate)", zwe: "ZWE", days: "Tage",
+    jaz_tip: "Wärme ÷ Strom über {d} Tage aus der Langzeitstatistik ({x} Tage wegen Zählersprung oder fehlender Daten ausgelassen)",
     src: {
       air: { title: "Luft", in: "Luft ein", out: "Luft aus" },
       brine: { title: "Erdsonde", in: "Sole ein", out: "Sole aus" },
@@ -112,7 +113,8 @@ const I18N = {
     evu: "Utility lock", since: "for", fault: "Fault", fault_active: "Fault active",
     defrost_running: "Defrosting", defrost_in: "Defrost in",
     heat_output: "Heat output", power: "Power input", cop_heating: "COP heating", cop_dhw: "COP hot water",
-    spread: "Spread", jaz: "Overall SPF", zwe: "Aux",
+    spread: "Spread", jaz: "SPF (12 months)", zwe: "Aux", days: "days",
+    jaz_tip: "Heat ÷ electricity over {d} days of long-term statistics ({x} days left out for a counter glitch or missing data)",
     src: {
       air: { title: "Air", in: "Air in", out: "Air out" },
       brine: { title: "Ground loop", in: "Brine in", out: "Brine out" },
@@ -163,6 +165,9 @@ class LuxtronikHeatpumpCard extends HTMLElement {
     };
     this._built = false;
     this._prefix = undefined;
+    this._spf = undefined;
+    this._spfAt = undefined;
+    this._spfReq = undefined; // drops a response still in flight for the old config
     if (this._hass) this._build();
   }
 
@@ -491,12 +496,74 @@ class LuxtronikHeatpumpCard extends HTMLElement {
     const rl = this._num("return");
     kpi("spread", pumpOn && !isNaN(vl) && !isNaN(rl) ? `${this._fmtNumber(vl - rl, 1)} K` : "–", isNaN(vl) || isNaN(rl));
 
-    // Overall SPF since commissioning: Σ heat / Σ electricity (heating + DHW)
-    const sum = (keys) => keys.reduce((a, k) => a + (isNaN(this._num(k)) ? 0 : this._num(k)), 0);
+    // SPF over the last 12 months, from the long-term statistics (see _refreshSpf)
     const hasJaz = ["heat_amount_heating", "energy_heating"].every((k) => this._st(k));
-    const q = sum(["heat_amount_heating", "heat_amount_dhw"]);
-    const w = sum(["energy_heating", "energy_dhw"]);
-    kpi("jaz", hasJaz && w > 0 ? this._fmtNumber(q / w, 2) : "–", !hasJaz);
+    if (hasJaz) this._refreshSpf();
+    const spf = hasJaz && this._spf;
+    kpi("jaz", spf ? this._fmtNumber(spf.value, 2) + (spf.days < 330 ? ` · ${spf.days} ${T.days}` : "") : "–", !hasJaz);
+    const jazEl = r.querySelector('[data-kpi="jaz"]');
+    if (jazEl) {
+      jazEl.title = spf ? T.jaz_tip.replace("{d}", spf.days).replace("{x}", spf.excluded) : "";
+      // Per-circuit split, beside the combined value
+      const split = (sel, part) => {
+        const row = jazEl.querySelectorAll(`[data-spf="${sel}"]`);
+        row.forEach((el) => (el.hidden = !part));
+        if (part) row[1].textContent = this._fmtNumber(part.value, 2);
+        return !!part;
+      };
+      const shown = [split("heating", spf && spf.heating), split("dhw", spf && spf.dhw)];
+      jazEl.querySelector(".ksub").hidden = !(shown[0] && shown[1]);
+    }
+  }
+
+  /**
+   * SPF = Σ heat / Σ electricity over the last 365 days, from daily
+   * long-term statistics of the four counters - not from their lifetime
+   * values: the electricity counters (P1136/P1137) only start counting with
+   * the firmware that added them, years after the heat counters (C0151/C0152),
+   * so the lifetime ratio comes out far too high. Fetched at most hourly.
+   */
+  _refreshSpf() {
+    const h = this._hass;
+    if (!h || typeof h.callWS !== "function" || this._spfReq) return;
+    if (this._spfAt && Date.now() < this._spfAt) return;
+    // Pairs of [heat, electricity]; heating first, DHW optional
+    const pair = (q, w) => {
+      const p = [this._eid(q), this._eid(w)];
+      return p[0] && p[1] ? p : null;
+    };
+    const heating = pair("heat_amount_heating", "energy_heating");
+    const dhw = pair("heat_amount_dhw", "energy_dhw");
+    const pairs = [heating, dhw].filter(Boolean);
+    const req = {};
+    this._spfReq = req;
+    h.callWS({
+      type: "recorder/statistics_during_period",
+      start_time: new Date(Date.now() - 365 * 864e5).toISOString(),
+      statistic_ids: pairs.flat(),
+      period: "day",
+      types: ["change", "state"],
+      units: { energy: "kWh" },
+    }).then(
+      (stats) => {
+        if (this._spfReq !== req) return;
+        this._spf = computeSpf(stats, pairs);
+        if (this._spf) {
+          this._spf.heating = heating && computeSpf(stats, [heating]);
+          this._spf.dhw = dhw && computeSpf(stats, [dhw]);
+        }
+        this._spfAt = Date.now() + 3600e3; // counters move slowly: hourly is plenty
+        this._spfReq = undefined;
+        this._update();
+      },
+      () => {
+        if (this._spfReq !== req) return;
+        this._spf = null;
+        this._spfAt = Date.now() + 60e3; // e.g. websocket reconnecting: retry soon
+        this._spfReq = undefined;
+        this._update();
+      }
+    );
   }
 
   connectedCallback() {
@@ -534,6 +601,57 @@ function heatSourceFromModel(model) {
   if (/^(SW|MSW|KSW|WZS)/.test(m)) return "brine";
   if (/^(L|KLW|HMD|HZ_HMD)/.test(m)) return "air";
   return undefined;
+}
+
+/**
+ * SPF from daily statistics rows ({ id: [{ start, change, state }] }) for
+ * [heat, electricity] counter pairs; pairs[0] (heating) is required.
+ * - A day whose change is more than half the counter's own state is a glitch:
+ *   the controller sometimes reports a whole calculations block as 0 for a
+ *   moment, and HA then books the full counter value as that day's change.
+ *   Such a day is dropped for all counters, so heat and electricity stay paired.
+ * - Counting starts on the first day the heating electricity counter advances,
+ *   so heat delivered before that counter existed is not included.
+ * - A day without rows for the heating pair is dropped; another pair counts on
+ *   a day only if both of its counters have a row, so no heat goes unmatched.
+ * Returns { value, days, excluded } or null.
+ */
+function computeSpf(stats, pairs) {
+  if (!pairs.length) return null;
+  const days = new Map();
+  pairs.flat().forEach((id) => {
+    for (const row of (stats && stats[id]) || []) {
+      if (row.change == null) continue;
+      const d = days.get(row.start) || { v: {}, bad: false };
+      const st = row.state;
+      if (row.change < 0 || (row.change > 1 && st != null && row.change > 0.5 * st)) d.bad = true;
+      d.v[id] = row.change;
+      days.set(row.start, d);
+    }
+  });
+  const has = (d, p) => d.v[p[0]] !== undefined && d.v[p[1]] !== undefined;
+  let started = false;
+  let h = 0;
+  let e = 0;
+  let n = 0;
+  let excluded = 0;
+  for (const [, d] of [...days].sort((a, b) => a[0] - b[0])) {
+    if (!started) {
+      if (d.bad || !has(d, pairs[0]) || !(d.v[pairs[0][1]] > 0)) continue;
+      started = true;
+    }
+    if (d.bad || !has(d, pairs[0])) {
+      excluded++;
+      continue;
+    }
+    for (const p of pairs) {
+      if (!has(d, p)) continue;
+      h += d.v[p[0]];
+      e += d.v[p[1]];
+    }
+    n++;
+  }
+  return e > 0 ? { value: h / e, days: n, excluded } : null;
 }
 
 function fmtDuration(sec) {
@@ -604,18 +722,23 @@ function headerTpl(c) {
 }
 
 function kpiTpl() {
-  const tile = (key, label, icon, click) => `
+  const tile = (key, label, icon, click, extra) => `
     <div class="kpi" data-kpi="${key}" data-click="${click || key}">
       <ha-icon icon="${icon}"></ha-icon>
-      <div><div class="kl"${key === "cop" ? " data-cop-label" : ""}>${label}</div><div class="kv">–</div></div>
+      <div><div class="kl"${key === "cop" ? " data-cop-label" : ""}>${label}</div><div class="kv">–</div></div>${extra || ""}
     </div>`;
+  const spfSplit = `
+      <div class="ksub" hidden>
+        <span data-spf="heating">${T.heating}</span><b data-spf="heating">–</b>
+        <span data-spf="dhw">${T.dhw}</span><b data-spf="dhw">–</b>
+      </div>`;
   return `
     <div class="kpis">
       ${tile("heat_output", T.heat_output, "mdi:fire")}
       ${tile("power", T.power, "mdi:flash")}
       ${tile("cop", "COP", "mdi:gauge", "cop_heating")}
       ${tile("spread", T.spread, "mdi:arrow-expand-vertical", "flow")}
-      ${tile("jaz", T.jaz, "mdi:chart-line", "heat_amount_heating")}
+      ${tile("jaz", T.jaz, "mdi:chart-line", "heat_amount_heating", spfSplit)}
     </div>`;
 }
 
@@ -976,6 +1099,12 @@ svg.hp.no-refrigerant .refrigerant .v, svg.hp.no-refrigerant .refrigerant .cap {
 .kl { font-size:.78rem; color: var(--lx-muted); }
 .kv { font-size:1.15rem; font-weight:600; color: var(--lx-text); font-variant-numeric: tabular-nums; }
 .kpi.missing { display:none; }
+/* SPF split per circuit: right of the value, wraps below it on a narrow tile */
+.kpi[data-kpi="jaz"] { flex-wrap: wrap; row-gap: 4px; }
+.ksub { margin-left:auto; display:grid; grid-template-columns: auto auto; column-gap:6px; align-items:baseline;
+  font-size:.72rem; color: var(--lx-muted); line-height:1.35; }
+.ksub b { font-weight:600; color: var(--lx-text); text-align:right; font-variant-numeric: tabular-nums; }
+.ksub[hidden], .ksub [hidden] { display:none; }
 
 /* Narrow card (phone): diagram as picture only, main values as tiles below */
 .temps { display:none; }
