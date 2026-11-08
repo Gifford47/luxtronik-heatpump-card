@@ -170,6 +170,9 @@ class LuxtronikHeatpumpCard extends HTMLElement {
     this._hass = hass;
     if (!this._config) return;
     if (this._lang !== langOf(hass)) this._built = false;
+    // The device registry can arrive after the first states, so an "auto"
+    // heat source may only become decidable on a later update.
+    if (this._built && this._heatSource() !== this._builtSource) this._built = false;
     if (!this._built) this._build();
     this._update();
   }
@@ -198,6 +201,27 @@ class LuxtronikHeatpumpCard extends HTMLElement {
   _st(key) {
     const id = this._eid(key);
     return id && this._hass ? this._hass.states[id] : undefined;
+  }
+
+  /**
+   * Resolve the heat source. "auto" reads the model code the integration
+   * stores as the device model (ID_WEB_Code_WP_akt, e.g. "MSW4-16", "LWC407").
+   * The defrost valve entity is no evidence: luxtronik2 creates it on every
+   * unit, brine and water included. It is only kept as the last resort, so
+   * units whose model names no source (ERC, …) behave as before.
+   */
+  _heatSource() {
+    const hs = this._config.heat_source;
+    if (hs !== "auto") return hs;
+    const h = this._hass;
+    for (const key of ["status", "outdoor", "source_in", "compressor"]) {
+      const id = this._eid(key);
+      const ent = id && h && h.entities && h.entities[id];
+      const dev = ent && ent.device_id && h.devices && h.devices[ent.device_id];
+      const fromModel = dev && heatSourceFromModel(dev.model);
+      if (fromModel) return fromModel;
+    }
+    return this._st("defrost_valve") ? "air" : "brine";
   }
 
   _num(key) {
@@ -277,9 +301,9 @@ class LuxtronikHeatpumpCard extends HTMLElement {
     if (!this._hass) return;
     this._lang = langOf(this._hass);
     T = I18N[this._lang];
-    // Heat source "auto": defrost valve present -> air, otherwise brine
     const c = { ...this._config, title: this._config.title || T.title };
-    if (c.heat_source === "auto") c.heat_source = this._st("defrost_valve") ? "air" : "brine";
+    c.heat_source = this._heatSource();
+    this._builtSource = c.heat_source;
     const src = T.src[c.heat_source];
     this.shadowRoot.innerHTML = `
       <style>${STYLES}</style>
@@ -494,6 +518,21 @@ function detectPrefix(hass) {
     const m = id.match(/^sensor\.(\w+?)_flow_out_temperature_target$/);
     if (m && hass.states[`sensor.${m[1]}_status`]) return m[1];
   }
+  return undefined;
+}
+
+/**
+ * Map a Luxtronik model code to its heat source. Codes as reported by
+ * ID_WEB_Code_WP_akt: L…/KLW = air/water, HMD 2/HZ_HMD = hydraulic module of
+ * an air split unit, SW…/MSW…/KSW/WZS = brine/water, WW…/WZW… = water/water.
+ * WWB_20 (a DHW heat pump), ERC and unknown codes say nothing.
+ */
+function heatSourceFromModel(model) {
+  const m = String(model || "").toUpperCase().replace(/\s+/g, "");
+  if (!m) return undefined;
+  if (/^(WW(?!B)|WZW)/.test(m)) return "water";
+  if (/^(SW|MSW|KSW|WZS)/.test(m)) return "brine";
+  if (/^(L|KLW|HMD|HZ_HMD)/.test(m)) return "air";
   return undefined;
 }
 
