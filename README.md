@@ -15,7 +15,7 @@ An animated system-diagram card for Home Assistant, for heat pumps with a **Luxt
   - *Is water moving*: any of HUP, ZUP or BUP running, or a flow rate above 50 L/h. Units that circulate via ZUP/BUP during DHW (HUP off) are therefore shown correctly.
 - **DHW tank**: actual temperature (fill colour from cold to hot) and target.
 - **Header**: operating state as a coloured chip, controller status lines and runtime, heating/DHW modes, utility lock (EVU), smart-grid status (only shown when not in normal operation, e.g. power limitation), fault banner.
-- **Key figures**: heat output, power input, COP (heating or DHW depending on mode, only while the compressor runs; falls back to heat output ÷ power input when the COP sensor is missing and power input is above 50 W), spread (only while the pump runs), overall SPF (Σ heat ÷ Σ energy input, heating + DHW, since commissioning).
+- **Key figures**: heat output, power input, COP (heating or DHW depending on mode, only while the compressor runs; falls back to heat output ÷ power input when the COP sensor is missing and power input is above 50 W), spread (only while the pump runs), SPF over the last 12 months (Σ heat ÷ Σ energy input, heating + DHW, with the heating and DHW figures beside it, from Home Assistant's long-term statistics of the four counters; shows the number of days used when that is fewer than 330, e.g. while less than a year of history exists). The lifetime counters cannot be divided directly: the energy input counters only start counting with the firmware that added them, often years after the heat counters. Days on which a counter jumped by roughly its whole value (the controller briefly reporting 0) are left out.
 - **Visual editor**: every setting and every entity mapping can be changed in the UI.
 - **German and English**, following the Home Assistant language.
 - **Narrow cards** (≤ 560 px, e.g. phones): the diagram shows symbols only and the main values move into tiles below.
@@ -126,8 +126,8 @@ All keys and their default entities (`%` = prefix):
 | `dhw` / `dhw_target` | `sensor.%_dhw_temperature` / `number.%_dhw_target_temperature` | DHW tank |
 | `heat_output` / `power` | `sensor.%_current_heat_output` / `sensor.%_current_power_consumption` | Power |
 | `cop_heating` / `cop_dhw` | `sensor.%_cop_heating` / `sensor.%_cop_dhw` | COP |
-| `heat_amount_heating` / `heat_amount_dhw` | `sensor.%_heat_amount_heating` / `sensor.%_dhw_heat_amount` | Overall SPF (heat) |
-| `energy_heating` / `energy_dhw` | `sensor.%_heat_energy_input` / `sensor.%_dhw_energy_input` | Overall SPF (electricity) |
+| `heat_amount_heating` / `heat_amount_dhw` | `sensor.%_heat_amount_heating` / `sensor.%_dhw_heat_amount` | SPF (heat) |
+| `energy_heating` / `energy_dhw` | `sensor.%_heat_energy_input` / `sensor.%_dhw_energy_input` | SPF (electricity) |
 
 > **Naming pitfalls in the integration**
 > - `flow_in_temperature` is the **flow** temperature and `flow_out_temperature` is the **return** temperature. `flow_out_temperature_target` is the return target the Luxtronik controller regulates to.
