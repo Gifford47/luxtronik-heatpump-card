@@ -6,7 +6,7 @@
  * No dependencies, no build step. MIT License.
  */
 
-const CARD_VERSION = "1.3.1";
+const CARD_VERSION = "1.3.2";
 
 /* ------------------------------------------------------------------ */
 /*  Entity mapping: logical key -> default entity (% = prefix)          */
