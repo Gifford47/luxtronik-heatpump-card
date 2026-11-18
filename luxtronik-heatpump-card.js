@@ -6,7 +6,7 @@
  * No dependencies, no build step. MIT License.
  */
 
-const CARD_VERSION = "1.3.2";
+const CARD_VERSION = "1.4.0";
 
 /* ------------------------------------------------------------------ */
 /*  Entity mapping: logical key -> default entity (% = prefix)          */
@@ -321,8 +321,12 @@ class LuxtronikHeatpumpCard extends HTMLElement {
           ${svgTpl(c, src)}
         </div>
         <div class="temps">
-          ${[["outdoor", T.outdoor], ["flow", T.flow], ["return", T.return], ["flow_rate", T.flow_rate]]
-            .map(([k, t]) => `<div class="mini" data-k="${k}"><span class="t">${t}</span><span class="n">–</span></div>`)
+          ${[["outdoor", T.outdoor], ["flow", T.flow], ["return", T.return, "return_target"], ["flow_rate", T.flow_rate]]
+            .map(([k, t, sub]) => `
+              <div class="mini" data-k="${k}"${sub ? ` data-sub="${sub}"` : ""}>
+                <div><span class="t">${t}</span><span class="n">–</span></div>
+                ${sub ? `<div class="ksub" hidden><span>${T.target}</span><b>–</b></div>` : ""}
+              </div>`)
             .join("")}
         </div>
         ${c.show_kpis ? kpiTpl() : ""}
@@ -356,6 +360,13 @@ class LuxtronikHeatpumpCard extends HTMLElement {
       if (sub && subKey) {
         const ss = this._st(subKey);
         sub.textContent = ss ? `${g.dataset.subLabel || ""}${this._fmt(subKey)}` : "";
+      }
+      // Tile with a target beside the value (same layout as the SPF split)
+      const ksub = g.querySelector(".ksub");
+      if (ksub && subKey) {
+        const ss = this._st(subKey);
+        ksub.hidden = !ss;
+        if (ss) ksub.querySelector("b").textContent = this._fmt(subKey);
       }
     });
 
@@ -962,7 +973,9 @@ ha-card { overflow: hidden; padding-bottom: 8px; }
 /* Schema */
 .schema { padding: 4px 8px 0; }
 .lxwrap { container: lxcard / inline-size; }
-.temps .mini { display:flex; flex-direction:column; padding:8px 12px; border-radius:12px; cursor:pointer; background: color-mix(in srgb, var(--lx-text) 4%, transparent); }
+.temps .mini { display:flex; flex-wrap:wrap; align-items:center; column-gap:8px; row-gap:2px; padding:8px 12px; border-radius:12px; cursor:pointer;
+  background: color-mix(in srgb, var(--lx-text) 4%, transparent); }
+.temps .mini > div:first-child { display:flex; flex-direction:column; }
 .temps .t { font-size:.78rem; color: var(--lx-muted); }
 .temps .n { font-size:1.15rem; font-weight:600; color: var(--lx-text); font-variant-numeric: tabular-nums; }
 .temps .mini.missing { display:none; }
@@ -1106,13 +1119,31 @@ svg.hp.no-refrigerant .refrigerant .v, svg.hp.no-refrigerant .refrigerant .cap {
 .ksub b { font-weight:600; color: var(--lx-text); text-align:right; font-variant-numeric: tabular-nums; }
 .ksub[hidden], .ksub [hidden] { display:none; }
 
-/* Narrow card (phone): diagram as picture only, main values as tiles below */
+/* Narrow card (phone): the diagram stays as on the desktop, only scaled down,
+   with every value; the main values are repeated as compact tiles below */
 .temps { display:none; }
 @container lxcard (max-width: 560px) {
-  svg.hp .v, svg.hp .cap:not(.strong), svg.hp .htitle, svg.hp .zwe text { display:none; }
-  svg.hp .cap.strong { font-size: 26px; }
-  svg.hp .tank .tt { font-size: 40px; }
-  .temps { display:grid; grid-template-columns: repeat(2, 1fr); gap:8px; padding: 8px 16px 0; }
+  .header { padding: 12px 12px 2px; gap: 8px; }
+  .title { gap: 10px; }
+  .title > ha-icon { --mdc-icon-size: 24px; }
+  .name { font-size: 1.1rem; }
+  .lines { font-size: .8rem; }
+  .chips { gap: 6px; }
+  .chip { padding: 3px 10px 3px 6px; gap: 4px; font-size: .82rem; }
+  .chip ha-icon { --mdc-icon-size: 16px; }
+  .modes { padding: 6px 12px 0; gap: 6px; }
+  .mode { padding: 3px 8px; font-size: .8rem; }
+  .banner { margin: 8px 12px 0; }
+  .schema { padding: 4px 4px 0; }
+  .temps { display:grid; grid-template-columns: repeat(2, 1fr); gap:6px; padding: 6px 12px 0; }
+  .kpis { grid-template-columns: repeat(2, 1fr); gap:6px; padding: 6px 12px 4px; }
+  .temps .mini, .kpi { padding: 6px 10px; border-radius: 10px; }
+  .kpi { gap: 8px; }
+  .kpi ha-icon { --mdc-icon-size: 18px; }
+  .temps .n, .kv { font-size: 1.05rem; }
+  /* SPF across the full width, without icon: split stays beside the value */
+  .kpi[data-kpi="jaz"] { grid-column: 1 / -1; }
+  .kpi[data-kpi="jaz"] > ha-icon { display:none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -18,7 +18,7 @@ An animated system-diagram card for Home Assistant, for heat pumps with a **Luxt
 - **Key figures**: heat output, power input, COP (heating or DHW depending on mode, only while the compressor runs; falls back to heat output ÷ power input when the COP sensor is missing and power input is above 50 W), spread (only while the pump runs), SPF over the last 12 months (Σ heat ÷ Σ energy input, heating + DHW, with the heating and DHW figures beside it, from Home Assistant's long-term statistics of the four counters; shows the number of days used when that is fewer than 330, e.g. while less than a year of history exists). The lifetime counters cannot be divided directly: the energy input counters only start counting with the firmware that added them, often years after the heat counters. Days on which a counter jumped by roughly its whole value (the controller briefly reporting 0) are left out.
 - **Visual editor**: every setting and every entity mapping can be changed in the UI.
 - **German and English**, following the Home Assistant language.
-- **Narrow cards** (≤ 560 px, e.g. phones): the diagram shows symbols only and the main values move into tiles below.
+- **Narrow cards** (≤ 560 px, e.g. phones): the diagram keeps the desktop layout with every value, scaled down; outdoor, flow, return (with its target) and flow rate are repeated as tiles below. Header and tiles are tighter; the SPF tile spans the full width without its icon.
 
 Every value is clickable and opens the Home Assistant more-info dialog. Values whose entity does not exist are hidden automatically.
 
