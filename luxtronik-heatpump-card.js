@@ -6,7 +6,7 @@
  * No dependencies, no build step. MIT License.
  */
 
-const CARD_VERSION = "1.3.2";
+const CARD_VERSION = "1.4.0";
 
 /* ------------------------------------------------------------------ */
 /*  Entity mapping: logical key -> default entity (% = prefix)          */
@@ -319,10 +319,15 @@ class LuxtronikHeatpumpCard extends HTMLElement {
         </div>
         <div class="schema">
           ${svgTpl(c, src)}
+          ${svgNarrowTpl(c, src)}
         </div>
         <div class="temps">
-          ${[["outdoor", T.outdoor], ["flow", T.flow], ["return", T.return], ["flow_rate", T.flow_rate]]
-            .map(([k, t]) => `<div class="mini" data-k="${k}"><span class="t">${t}</span><span class="n">–</span></div>`)
+          ${[["outdoor", T.outdoor], ["flow", T.flow], ["return", T.return, "return_target"], ["flow_rate", T.flow_rate]]
+            .map(([k, t, sub]) => `
+              <div class="mini" data-k="${k}"${sub ? ` data-sub="${sub}"` : ""}>
+                <div><span class="t">${t}</span><span class="n">–</span></div>
+                ${sub ? `<div class="ksub" hidden><span>${T.target}</span><b>–</b></div>` : ""}
+              </div>`)
             .join("")}
         </div>
         ${c.show_kpis ? kpiTpl() : ""}
@@ -357,6 +362,13 @@ class LuxtronikHeatpumpCard extends HTMLElement {
         const ss = this._st(subKey);
         sub.textContent = ss ? `${g.dataset.subLabel || ""}${this._fmt(subKey)}` : "";
       }
+      // Tile with a target beside the value (same layout as the SPF split)
+      const ksub = g.querySelector(".ksub");
+      if (ksub && subKey) {
+        const ss = this._st(subKey);
+        ksub.hidden = !ss;
+        if (ss) ksub.querySelector("b").textContent = this._fmt(subKey);
+      }
     });
 
     // States
@@ -385,8 +397,8 @@ class LuxtronikHeatpumpCard extends HTMLElement {
     const srcOn = srcPumpSt ? srcPumpSt.state === "on" : compressorOn;
     const evuLock = status === "evu";
 
-    const svg = r.querySelector("svg.hp");
-    if (svg) {
+    // Both diagrams (wide and narrow) carry the same state classes
+    for (const svg of r.querySelectorAll("svg.hp")) {
       svg.classList.toggle("comp-on", compressorOn);
       svg.classList.toggle("src-on", srcOn && !defrost);
       svg.classList.toggle("defrost", defrost);
@@ -399,8 +411,8 @@ class LuxtronikHeatpumpCard extends HTMLElement {
     }
 
     // Defrost countdown (air source; attribute of the status-time sensor)
-    const abt = r.querySelector("[data-defrost-in]");
-    if (abt) {
+    const abts = r.querySelectorAll("[data-defrost-in]");
+    if (abts.length) {
       const t = this._st("status_time");
       let txt = "";
       if (defrost) txt = T.defrost_running;
@@ -409,15 +421,15 @@ class LuxtronikHeatpumpCard extends HTMLElement {
         const sec = k ? parseFloat(t.attributes[k]) : NaN;
         if (!isNaN(sec) && sec > 0) txt = `${T.defrost_in} ${fmtDuration(sec)}`;
       }
-      abt.textContent = txt;
+      abts.forEach((el) => (el.textContent = txt));
     }
 
     // Tank fill colour
     const dhwT = this._num("dhw");
-    const tankFill = r.querySelector("[data-tank-fill]");
-    if (tankFill) tankFill.setAttribute("fill", tempColor(isNaN(dhwT) ? 35 : dhwT, 20, 62));
-    const tankTxt = r.querySelector("[data-tank-temp]");
-    if (tankTxt) tankTxt.textContent = this._fmt("dhw");
+    const fill = tempColor(isNaN(dhwT) ? 35 : dhwT, 20, 62);
+    r.querySelectorAll("[data-tank-fill]").forEach((el) => el.setAttribute("fill", fill));
+    const dhwTxt = this._fmt("dhw");
+    r.querySelectorAll("[data-tank-temp]").forEach((el) => (el.textContent = dhwTxt));
 
     // Header
     const chip = r.querySelector("[data-status-chip]");
@@ -684,18 +696,23 @@ function tempColor(t, min, max) {
   return `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.28)`;
 }
 
+/* Line offsets of a value label; the narrow diagram uses larger type (see STYLES) */
+const LBL_WIDE = { n: 19, nBig: 24, s: 36, sBig: 42, h: 38, hSub: 56 };
+const LBL_NARROW = { n: 21, nBig: 27, s: 37, sBig: 45, h: 40, hSub: 57 };
+
 /* SVG value label: title + value (+ optional sub line) */
 function lbl(key, x, y, title, opts = {}) {
   const a = opts.anchor || "middle";
+  const m = opts.m || LBL_WIDE;
   const sub = opts.sub
     ? ` data-sub="${opts.sub}" data-sub-label="${opts.subLabel || ""}"`
     : "";
   return `
     <g class="v${opts.big ? " big" : ""}" data-k="${key}"${sub} transform="translate(${x},${y})">
-      <rect class="hit" x="${a === "start" ? -4 : a === "end" ? -96 : -50}" y="-14" width="100" height="${opts.sub ? 56 : 38}" rx="6"/>
+      <rect class="hit" x="${a === "start" ? -4 : a === "end" ? -96 : -50}" y="-14" width="100" height="${opts.sub ? m.hSub : m.h}" rx="6"/>
       <text class="t" text-anchor="${a}">${title}</text>
-      <text class="n" y="${opts.big ? 24 : 19}" text-anchor="${a}">–</text>
-      ${opts.sub ? `<text class="s" y="${opts.big ? 42 : 36}" text-anchor="${a}"></text>` : ""}
+      <text class="n" y="${opts.big ? m.nBig : m.n}" text-anchor="${a}">–</text>
+      ${opts.sub ? `<text class="s" y="${opts.big ? m.sBig : m.s}" text-anchor="${a}"></text>` : ""}
     </g>`;
 }
 
@@ -800,7 +817,7 @@ function sourceTpl(c, src) {
 
 function svgTpl(c, src) {
   return `
-  <svg class="hp" viewBox="0 0 1000 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${T.title}">
+  <svg class="hp wide" viewBox="0 0 1000 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${T.title}">
     <defs>
       <linearGradient id="lxHot" x1="0" x2="1"><stop offset="0" stop-color="#f97316"/><stop offset="1" stop-color="#e5484d"/></linearGradient>
     </defs>
@@ -911,6 +928,149 @@ function svgTpl(c, src) {
   </svg>`;
 }
 
+/*
+ * Portrait variant for narrow cards (phones): the same elements, classes and
+ * data keys as the wide diagram, so _update drives both and every value stays
+ * visible. Heat source and refrigerant circuit side by side on top, heating
+ * water below - flow along the top, return along the bottom. The container
+ * query in STYLES shows one of the two diagrams.
+ */
+function sourceNarrowTpl(c, src, L) {
+  if (c.heat_source === "air") {
+    const arrows = [172, 204, 236]
+      .map((y) => `<path class="air" d="M2 ${y} h20 m-6 -5 l6 5 l-6 5"/>`)
+      .join("");
+    return `
+      <g class="source air-src">
+        ${arrows}
+        <rect class="box" x="28" y="136" width="112" height="140" rx="14"/>
+        <g class="fan" transform="translate(84,198) scale(.66)">
+          <circle class="ring" r="66"/>
+          <g class="blades">
+            ${[0, 120, 240]
+              .map((a) => `<path transform="rotate(${a})" d="M0 0 C 14 -10, 40 -22, 56 -10 C 44 4, 18 6, 0 0 Z"/>`)
+              .join("")}
+            <circle r="9" class="hub"/>
+            <circle r="60" class="pivot"/>
+          </g>
+        </g>
+        ${L("source_in", 84, 102, src.in)}
+        ${L("source_out", 84, 300, src.out)}
+        <text class="cap defrost-in" x="84" y="266" text-anchor="middle" data-defrost-in data-click="status_time"></text>
+      </g>`;
+  }
+  return `
+    <g class="source ground-src">
+      <rect class="ground" x="6" y="304" width="134" height="44" rx="8"/>
+      <text class="gl" x="30" y="330">${src.title}</text>
+      ${pipe("brine warm", "M18 304 V140 H160")}
+      ${pipe("brine cold", "M160 250 H128 V304")}
+      ${pipe("brine loop", "M128 304 V336 H18 V304")}
+      ${L("source_in", 88, 104, src.in)}
+      ${L("source_flow", 30, 178, T.source_flow, { anchor: "start" })}
+      ${L("source_out", 30, 274, src.out, { anchor: "start" })}
+    </g>`;
+}
+
+function svgNarrowTpl(c, src) {
+  const L = (key, x, y, title, opts = {}) => lbl(key, x, y, title, { ...opts, m: LBL_NARROW });
+  return `
+  <svg class="hp narrow" viewBox="0 0 560 576" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${T.title}">
+    ${L("outdoor", 8, 26, T.outdoor, { anchor: "start", big: true, sub: "outdoor_avg", subLabel: "Ø " })}
+
+    ${sourceNarrowTpl(c, src, L)}
+
+    <rect class="housing" x="146" y="4" width="366" height="346" rx="18"/>
+    <text class="htitle" x="160" y="24">${T.refrigerant}</text>
+
+    <g class="refrigerant">
+      ${pipe("r-suction", "M180 112 V90 H299")}
+      ${pipe("r-hot", "M359 90 H478 V112")}
+      ${pipe("r-liquid", "M478 276 V308 H347")}
+      ${pipe("r-inject", "M311 308 H180 V276")}
+
+      <rect class="hx evap" x="160" y="112" width="40" height="164" rx="8"/>
+      <path class="coil" d="${zigzag(160, 118, 270, 40, 8)}"/>
+      <rect class="frost" x="160" y="112" width="40" height="164" rx="8"/>
+      <text class="cap" x="190" y="297">${T.evaporator}</text>
+
+      <rect class="hx cond" x="458" y="112" width="40" height="164" rx="8"/>
+      <path class="coil" d="${zigzag(458, 118, 270, 40, 8)}"/>
+      <text class="cap" x="468" y="297" text-anchor="end">${T.condenser}</text>
+
+      <g class="compressor" data-click="compressor" transform="translate(329,90)">
+        <circle class="body" r="30"/>
+        <g class="rotor">
+          <path d="M0 -18 A18 18 0 0 1 18 0 M0 18 A18 18 0 0 1 -18 0 M-11 -11 L11 11 M11 -11 L-11 11"/>
+        </g>
+      </g>
+      ${L("frequency", 329, 150, T.compressor)}
+
+      <g class="eev" transform="translate(329,308)">
+        <path d="M-18 -12 L18 12 L18 -12 L-18 12 Z"/>
+      </g>
+      <text class="cap" x="329" y="338" text-anchor="middle">${T.eev}</text>
+
+      ${L("suction", 252, 44, T.suction)}
+      ${L("low_pressure", 249, 120, T.low_pressure)}
+      ${L("hot_gas", 406, 44, T.hot_gas)}
+      ${L("high_pressure", 409, 120, T.high_pressure)}
+      ${L("superheat", 329, 200, T.superheat, { sub: "superheat_target", subLabel: `${T.target} ` })}
+      ${L("evaporation", 329, 262, T.evaporation)}
+    </g>
+
+    <!-- Heating water: flow leaves the condenser low and runs along the top
+         of the lower half, the return comes back along the bottom -->
+    <g class="water">
+      ${pipe("w-flow", "M498 250 H528 V376 H416")}
+      ${pipe("w-heat", "M384 376 H140 V420 H120")}
+      ${pipe("w-heat-ret", "M20 440 H8 V566 H360")}
+      ${pipe("w-dhw", "M400 392 V490 H310")}
+      ${pipe("w-dhw-ret", "M310 532 H360 V566")}
+      ${pipe("w-ret", "M360 566 H542 V140 H498")}
+
+      <g class="zwe" data-click="zwe" transform="translate(470,376)">
+        <rect x="-18" y="-11" width="36" height="22" rx="5"/>
+        <path d="M-12 0 l4 -6 l4 12 l4 -12 l4 12 l4 -12 l4 6"/>
+        <text class="cap" y="27" text-anchor="middle">${T.zwe}</text>
+      </g>
+
+      <!-- 3-way valve: in from the right, heating to the left, DHW down -->
+      <g class="valve" data-click="dhw_valve" transform="translate(400,376)">
+        <path class="vin" d="M16 -9 L0 0 L16 9 Z"/>
+        <path class="vheat" d="M-16 -9 L0 0 L-16 9 Z"/>
+        <path class="vdhw" d="M-9 16 L0 0 L9 16 Z"/>
+        <circle r="3.5" class="vc"/>
+      </g>
+
+      <text class="cap strong" x="70" y="398" text-anchor="middle">${T.heating_circuit}</text>
+      <g class="radiator">
+        <rect x="20" y="406" width="100" height="52" rx="7"/>
+        ${[38, 54, 70, 86, 102].map((x) => `<line x1="${x}" y1="414" x2="${x}" y2="450"/>`).join("")}
+      </g>
+      ${L("room", 70, 482, T.room, { sub: "room_target", subLabel: `${T.target} ` })}
+
+      <text class="cap strong" x="260" y="398" text-anchor="middle">${T.dhw}</text>
+      <g class="tank" data-click="dhw">
+        <rect class="shell" x="210" y="406" width="100" height="144" rx="28"/>
+        <rect data-tank-fill x="213" y="409" width="94" height="138" rx="25" fill="transparent"/>
+        <path class="coil tcoil" d="M310 490 C 280 490, 230 494, 230 500 S 290 507, 290 511 S 230 517, 230 521 S 280 532, 310 532"/>
+        <text class="tt" x="260" y="446" text-anchor="middle" data-tank-temp>–</text>
+      </g>
+      ${L("dhw_target", 260, 466, T.target)}
+
+      <g class="pumpicon" data-click="pump" transform="translate(542,478)">
+        <circle r="15"/>
+        <g class="imp"><path d="M-8 -8 L8 8 M8 -8 L-8 8"/></g>
+      </g>
+
+      ${L("flow", 524, 428, T.flow, { anchor: "end" })}
+      ${L("flow_rate", 524, 474, T.pump, { anchor: "end" })}
+      ${L("return", 524, 518, T.return, { anchor: "end", sub: "return_target", subLabel: `${T.target} ` })}
+    </g>
+  </svg>`;
+}
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
 }
@@ -962,7 +1122,9 @@ ha-card { overflow: hidden; padding-bottom: 8px; }
 /* Schema */
 .schema { padding: 4px 8px 0; }
 .lxwrap { container: lxcard / inline-size; }
-.temps .mini { display:flex; flex-direction:column; padding:8px 12px; border-radius:12px; cursor:pointer; background: color-mix(in srgb, var(--lx-text) 4%, transparent); }
+.temps .mini { display:flex; flex-wrap:wrap; align-items:center; column-gap:8px; row-gap:2px; padding:8px 12px; border-radius:12px; cursor:pointer;
+  background: color-mix(in srgb, var(--lx-text) 4%, transparent); }
+.temps .mini > div:first-child { display:flex; flex-direction:column; }
 .temps .t { font-size:.78rem; color: var(--lx-muted); }
 .temps .n { font-size:1.15rem; font-weight:600; color: var(--lx-text); font-variant-numeric: tabular-nums; }
 .temps .mini.missing { display:none; }
@@ -1106,13 +1268,40 @@ svg.hp.no-refrigerant .refrigerant .v, svg.hp.no-refrigerant .refrigerant .cap {
 .ksub b { font-weight:600; color: var(--lx-text); text-align:right; font-variant-numeric: tabular-nums; }
 .ksub[hidden], .ksub [hidden] { display:none; }
 
-/* Narrow card (phone): diagram as picture only, main values as tiles below */
+/* Narrow card (phone): portrait diagram that keeps every value, compact tiles */
 .temps { display:none; }
+svg.hp.narrow { display:none; }
+svg.hp.narrow .v .t { font-size: 14.5px; }
+svg.hp.narrow .v .n { font-size: 19.5px; }
+svg.hp.narrow .v .s { font-size: 13px; }
+svg.hp.narrow .v.big .n { font-size: 26px; }
+svg.hp.narrow .cap { font-size: 12.5px; }
+svg.hp.narrow .cap.strong { font-size: 14px; }
+svg.hp.narrow .tank .tt { font-size: 22px; }
 @container lxcard (max-width: 560px) {
-  svg.hp .v, svg.hp .cap:not(.strong), svg.hp .htitle, svg.hp .zwe text { display:none; }
-  svg.hp .cap.strong { font-size: 26px; }
-  svg.hp .tank .tt { font-size: 40px; }
-  .temps { display:grid; grid-template-columns: repeat(2, 1fr); gap:8px; padding: 8px 16px 0; }
+  svg.hp.wide { display:none; }
+  svg.hp.narrow { display:block; }
+  .header { padding: 12px 12px 2px; gap: 8px; }
+  .title { gap: 10px; }
+  .title > ha-icon { --mdc-icon-size: 24px; }
+  .name { font-size: 1.1rem; }
+  .lines { font-size: .8rem; }
+  .chips { gap: 6px; }
+  .chip { padding: 3px 10px 3px 6px; gap: 4px; font-size: .82rem; }
+  .chip ha-icon { --mdc-icon-size: 16px; }
+  .modes { padding: 6px 12px 0; gap: 6px; }
+  .mode { padding: 3px 8px; font-size: .8rem; }
+  .banner { margin: 8px 12px 0; }
+  .schema { padding: 4px 4px 0; }
+  .temps { display:grid; grid-template-columns: repeat(2, 1fr); gap:6px; padding: 6px 12px 0; }
+  .kpis { grid-template-columns: repeat(2, 1fr); gap:6px; padding: 6px 12px 4px; }
+  .temps .mini, .kpi { padding: 6px 10px; border-radius: 10px; }
+  .kpi { gap: 8px; }
+  .kpi ha-icon { --mdc-icon-size: 18px; }
+  .temps .n, .kv { font-size: 1.05rem; }
+  /* SPF across the full width, without icon: split stays beside the value */
+  .kpi[data-kpi="jaz"] { grid-column: 1 / -1; }
+  .kpi[data-kpi="jaz"] > ha-icon { display:none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
